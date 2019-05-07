@@ -1,0 +1,11 @@
+[package]
+name = "httptest"
+version = "0.1.0"
+authors = ["Ed Bassett <ed@devsketchpad.com>"]
+edition = "2018"
+
+[dependencies]
+hyper = "0.12.22"
+futures = "0.1.25"
+log = "0.4"
+env_logger = "0.6.0"
