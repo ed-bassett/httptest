@@ -1,55 +1,64 @@
-#![feature(box_syntax)]
-#![feature(impl_trait_in_bindings)]
-
-use log::{ info, trace, warn, error };
-use futures::{ future, prelude::* };
-use hyper::{
-  Body, Request, Response, Server, Method, StatusCode,
-  rt::Future,
-  service::service_fn,
-};
 use std::{
   fs::File,
-  io::prelude::*,
+  io::Write,
 };
 
-fn main() {
+use futures::StreamExt;
+use hyper::{
+  Request, Response, Method, StatusCode,
+  service::{service_fn, make_service_fn}, Body, Server,
+};
+use log::{ info, trace, error };
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   env_logger::init();
 
-  let addr    = ([127, 0, 0, 1], 3222).into();
-  info!("Starting server at: {:?}", addr);
-  let server  = Server::bind(&addr)
-    .serve( || service_fn(image))
-    .map_err( |e| error!("server error: {}", e) );
+  let addr = ([127, 0, 0, 1], 3222).into();
 
-  hyper::rt::run(server);
+  let server = Server::bind(&addr).serve(make_service_fn(|_conn|
+    async { Ok::<_, hyper::http::Error>(service_fn(image)) }
+  ));
+
+  info!("Starting server at: {:?}", addr);
+
+  server.await?;
+
+  Ok(())
 }
 
-type BoxFut = Box<Future<Item=Response<Body>, Error=hyper::http::Error> + Send>;
-
-fn image(req: Request<Body>) -> BoxFut {
+async fn image(req: Request<Body>) ->  Result<Response<Body>, hyper::http::Error>  {
   match (req.method(), req.uri().path()) {
     (&Method::PUT, "/") => {
       info!("Received PUT request with content_length: {:?}", req.headers().get(hyper::header::CONTENT_LENGTH).unwrap());
-      match File::create("./output.png") {
-        Err(_)    => {
-          error!("Couldn't open file for write");
-          box future::result(Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::from("Couldn't open file for write")))
-        },
-        Ok(mut f) => box req.into_body().map_err(|_|()).for_each( move |chunk| {
+
+      let Ok(file) = File::create("./output.png") else {
+        error!("Couldn't open file for write");
+
+        return Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::from("Couldn't open file for write"));
+      };
+
+      match req.into_body().scan((file, false), |(file, ref mut was_err), chunk| {
+        if *was_err { return futures::future::ready(None) }
+
+        let result = (|| {
+          let chunk = chunk?;
           trace!("Writing {} bytes", chunk.len());
-          f.write_all(&chunk).map_err(|_|())
-        } ).into_future().then( |r| match r {
-          Ok(_)  => Response::builder().status(StatusCode::OK).body(Body::empty()),
-          Err(_) => {
-            error!("Error writing to file");
-            Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::from("Error writing to file"))
-          },
-        } ),
+          file.write_all(&chunk)?;
+          anyhow::Ok(())
+        })();
+
+        if let Err(_) = result { *was_err = true; }
+
+        futures::future::ready(Some(result))
+      }).collect::<Vec<_>>().await.into_iter().collect::<anyhow::Result<Vec<_>>>() {
+        Ok(_)  => Response::builder().status(StatusCode::OK).body(Body::empty()),
+        Err(_) => {
+          error!("Error writing to file");
+          Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::from("Error writing to file"))
+        },
       }
     },
-    _ => {
-      box future::result(Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()))
-    },
+    _ => Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty())
   }
 }

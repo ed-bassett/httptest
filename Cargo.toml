@@ -5,7 +5,9 @@ authors = ["Ed Bassett <ed@devsketchpad.com>"]
 edition = "2018"
 
 [dependencies]
-hyper = "0.12.22"
-futures = "0.1.25"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "0.14.27", features = ["full"] }
+futures = "0.3.28"
 log = "0.4"
-env_logger = "0.6.0"
+env_logger = "0.10.0"
+anyhow = "1.0.75"
