@@ -8,11 +8,12 @@ use hyper::{
   Request, Response, Method, StatusCode,
   service::{service_fn, make_service_fn}, Body, Server,
 };
-use log::{ info, trace, error };
+use tracing::{info, trace, error};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-  env_logger::init();
+  let subscriber = tracing_subscriber::fmt().finish();
+  tracing::subscriber::set_global_default(subscriber)?;
 
   let addr = ([127, 0, 0, 1], 3222).into();
 
